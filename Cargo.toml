@@ -1,0 +1,17 @@
+[package]
+name = "bevy-game-2"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = { version = "1.0.98", features = ["backtrace"] }
+bevy = "0.16.0"
+derive_more = { version = "2.0.1", features = ["full"] }
+num_enum = "0.7.3"
+timecat = "1.45.5"
+
+[profile.release]
+opt-level = 3
+lto = true
+panic = "abort"
+codegen-units = 1
