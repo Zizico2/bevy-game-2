@@ -1,9 +1,7 @@
 mod chess_plugin;
 use bevy::prelude::Color;
 use bevy::prelude::*;
-use chess_plugin::{
-    CHESS_INITIAL_POSITION, ChessPlugin, ColoredPiece, IgnoreSquare, Piece, Square, update_pieces,
-};
+use chess_plugin::{ALL_SQUARES, ChessPlugin, ColoredPiece, Square, update_pieces};
 
 fn main() {
     let mut app = App::new();
@@ -102,42 +100,26 @@ fn load_assets(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.insert_resource(piece_assets);
 }
 
-fn setup(mut commands: Commands, piece_assets: Res<PieceAssets>) {
+fn setup(mut commands: Commands) {
     commands.spawn(Camera2d);
 
-    for (piece, square) in CHESS_INITIAL_POSITION {
+    for square in ALL_SQUARES {
         let file = square.file();
         let rank = square.rank();
         let x = (u8::from(file) as f32) * PIECE_SPRITE_SIZE - PIECE_SPRITE_SIZE * 4.0;
         let y = (u8::from(rank) as f32) * PIECE_SPRITE_SIZE - PIECE_SPRITE_SIZE * 4.0;
-        if let Some((piece, color)) = piece {
-            // spawn the piece
-            commands.spawn((
-                Sprite::from_image(piece_assets.get_image(piece, color)),
-                Pickable {
-                    is_hoverable: true,
-                    should_block_lower: false,
-                },
-                ColoredPiece { piece, color },
-                square,
-                Transform::from_xyz(x, y, 1.0),
-            ));
-        } else {
-            commands.spawn((
-                Pickable {
-                    is_hoverable: true,
-                    should_block_lower: false,
-                },
-                square,
-                Transform::from_xyz(x, y, 1.0),
-            ));
-        }
+
+        commands.spawn((
+            Pickable {
+                is_hoverable: true,
+                should_block_lower: false,
+            },
+            square,
+        ));
 
         // spawn the square
         commands
             .spawn((
-                square,
-                IgnoreSquare,
                 Pickable::default(),
                 Sprite::from_color(
                     if (u8::from(rank) + u8::from(file)) % 2 == 0 {
@@ -150,17 +132,20 @@ fn setup(mut commands: Commands, piece_assets: Res<PieceAssets>) {
                 Transform::from_xyz(x, y, 0.0),
             ))
             .observe(
-                |drop: Trigger<Pointer<DragDrop>>,
-                 squares: Query<&Square>,
-                 mut commands: Commands|
-                 -> Result {
-                    let from = squares.get(drop.dropped)?;
-                    let to = squares.get(drop.target)?;
+                move |drop: Trigger<Pointer<DragDrop>>,
+                      squares: Query<&Square, With<ColoredPiece>>,
+                      mut commands: Commands|
+                      -> Result {
+                    let Ok(from) = squares.get(drop.dropped) else {
+                        // if the dropped entity is not a piece, do nothing
+                        return Ok(());
+                    };
+                    let to = square;
 
                     // TODO: needs to check if needs promotion
                     commands.trigger(chess_plugin::Move {
                         from: *from,
-                        to: *to,
+                        to,
                         promotion: None,
                     });
 
@@ -179,7 +164,7 @@ fn square_to_transform(square: Square, z: f32) -> Transform {
 }
 
 fn update_piece_transforms_and_images(
-    mut piece_transforms: Query<(&Square, Option<&ColoredPiece>, Entity), Without<IgnoreSquare>>,
+    mut piece_transforms: Query<(&Square, Option<&ColoredPiece>, Entity)>,
     mut commands: Commands,
     piece_assets: Res<PieceAssets>,
 ) -> Result {
