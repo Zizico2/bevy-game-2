@@ -6,9 +6,10 @@ edition = "2024"
 [dependencies]
 anyhow = { version = "1.0.98", features = ["backtrace"] }
 bevy = "0.16.0"
+cozy-chess = "0.3.4"
 derive_more = { version = "2.0.1", features = ["full"] }
 num_enum = "0.7.3"
-timecat = "1.45.5"
+# timecat = "1.45.5"
 
 [profile.release]
 opt-level = 3

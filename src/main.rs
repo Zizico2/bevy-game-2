@@ -1,184 +1,197 @@
-use anyhow::Context;
+mod chess_plugin;
 use bevy::prelude::Color;
 use bevy::prelude::*;
-use components::{Piece, PieceIn, Square};
-use resources::BoardRes;
-use timecat::{ALL_SQUARES, BoardMethodOverload, Move};
-
-mod components;
-mod resources;
+use chess_plugin::{
+    CHESS_INITIAL_POSITION, ChessPlugin, ColoredPiece, IgnoreSquare, Piece, Square, update_pieces,
+};
 
 fn main() {
     let mut app = App::new();
-    app.add_plugins((DefaultPlugins, MeshPickingPlugin))
+    app.add_plugins((DefaultPlugins, MeshPickingPlugin, ChessPlugin))
         .insert_resource(SpritePickingSettings {
             picking_mode: SpritePickingMode::BoundingBox,
             ..Default::default()
         })
-        .add_systems(Startup, setup);
+        .add_systems(Startup, (load_assets, setup.after(load_assets)))
+        .add_systems(
+            Update,
+            update_piece_transforms_and_images.after(update_pieces),
+        );
 
     app.run();
 }
 
-fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
-    {
-        let board_res = BoardRes::default();
-        let board = &board_res.0;
-        let move_generator = board.generate_legal_moves();
-        let moves = move_generator.into_iter().collect::<Vec<_>>();
-        dbg!(moves);
-        commands.insert_resource(board_res);
-    }
-    commands.spawn(Camera2d);
+const PIECE_SPRITE_SIZE: f32 = 128.0;
 
-    let pawn = asset_server.load("pawn.png");
+#[derive(Resource)]
+struct PieceAssets {
+    white_pawn: Handle<Image>,
+    white_knight: Handle<Image>,
+    white_bishop: Handle<Image>,
+    white_rook: Handle<Image>,
+    white_queen: Handle<Image>,
+    white_king: Handle<Image>,
 
-    // spawn the board tile sprites
-    for square in ALL_SQUARES {
-        let file = square.get_file();
-        let rank = square.get_rank();
-
-        let x = (file.to_int() as f32) * 100.0 - 400.0;
-        let y = (rank.to_int() as f32) * 100.0 - 400.0;
-        let square = Square(square);
-        let tile_entity = commands
-            .spawn((
-                Sprite::from_color(
-                    if (rank.to_int() + file.to_int()) % 2 == 0 {
-                        Color::srgb(0.1, 0.1, 0.1) // dark color
-                    } else {
-                        Color::srgb(0.9, 0.9, 0.9) // light color
-                    },
-                    Vec2::new(100.0, 100.0),
-                ),
-                Transform::from_xyz(x, y, 0.0),
-                Pickable {
-                    is_hoverable: true,
-                    should_block_lower: true,
-                },
-                square,
-            ))
-            .observe(
-                move |drop: Trigger<Pointer<DragDrop>>,
-                      mut commands: Commands,
-                      pieces: Query<&PieceIn>,
-                      squares: Query<&Square>,
-                      mut board: ResMut<BoardRes>|
-                      -> Result {
-                    let piece_in = match pieces.get(drop.dropped) {
-                        Ok(piece_in) => piece_in,
-                        Err(_) => return Ok(()),
-                    };
-                    let source = match squares.get(piece_in.0) {
-                        Ok(square) => square,
-                        Err(_) => return Ok(()),
-                    };
-                    let dest = match squares.get(drop.target) {
-                        Ok(square) => square,
-                        Err(_) => return Ok(()),
-                    };
-
-                    // this is fallible in the case where source == dest
-                    // this should also fail if promotion is not possible
-                    let new_move = Move::new(source.0, dest.0, None)?;
-                    if board.0.push(new_move).is_err() {
-                        return Ok(());
-                    }
-
-                    commands.entity(drop.dropped).insert(PieceIn(drop.target));
-
-                    Ok(())
-                },
-            )
-            .id();
-
-        if square == Square(timecat::Square::A2) {
-            // spawn a single pawn
-            spawn_piece(x, y, &mut commands, tile_entity, pawn.clone());
-        } else if square == Square(timecat::Square::B2) {
-            // spawn a single pawn
-            spawn_piece(x, y, &mut commands, tile_entity, pawn.clone());
+    black_pawn: Handle<Image>,
+    black_knight: Handle<Image>,
+    black_bishop: Handle<Image>,
+    black_rook: Handle<Image>,
+    black_queen: Handle<Image>,
+    black_king: Handle<Image>,
+}
+impl PieceAssets {
+    fn get_image(&self, piece: chess_plugin::Piece, color: chess_plugin::Color) -> Handle<Image> {
+        match piece {
+            chess_plugin::Piece::Pawn => match color {
+                chess_plugin::Color::White => self.white_pawn.clone(),
+                chess_plugin::Color::Black => self.black_pawn.clone(),
+            },
+            chess_plugin::Piece::Knight => match color {
+                chess_plugin::Color::White => self.white_knight.clone(),
+                chess_plugin::Color::Black => self.black_knight.clone(),
+            },
+            chess_plugin::Piece::Bishop => match color {
+                chess_plugin::Color::White => self.white_bishop.clone(),
+                chess_plugin::Color::Black => self.black_bishop.clone(),
+            },
+            chess_plugin::Piece::Rook => match color {
+                chess_plugin::Color::White => self.white_rook.clone(),
+                chess_plugin::Color::Black => self.black_rook.clone(),
+            },
+            chess_plugin::Piece::Queen => match color {
+                chess_plugin::Color::White => self.white_queen.clone(),
+                chess_plugin::Color::Black => self.black_queen.clone(),
+            },
+            chess_plugin::Piece::King => match color {
+                chess_plugin::Color::White => self.white_king.clone(),
+                chess_plugin::Color::Black => self.black_king.clone(),
+            },
         }
     }
 }
 
-fn spawn_piece(
-    x: f32,
-    y: f32,
-    commands: &mut Commands,
-    tile_entity: Entity,
-    piece_image: Handle<Image>,
-) {
-    commands
-        .spawn((
-            // Sprite::from_color(Color::srgb(0.25, 0.25, 0.75), Vec2::new(80.0, 80.0)),
-            Sprite::from_image(piece_image),
-            Transform::from_xyz(x, y, 1.0),
-            Pickable {
-                should_block_lower: false,
-                is_hoverable: true,
-            },
-            Piece,
-            PieceIn(tile_entity),
-        ))
-        .observe(
-            |pressed: Trigger<Pointer<Pressed>>,
-             mut piece: Query<(&mut Transform, &Piece)>|
-             -> Result {
-                let mut piece = piece.get_mut(pressed.target)?;
-                let pos = pressed.hit.position.context("no position")?;
-                piece.0.translation.x = pos.x;
-                piece.0.translation.y = pos.y;
-                piece.0.translation.z = 2.0;
-                Ok(())
-            },
-        )
-        .observe(
-            |trigger: Trigger<Pointer<Drag>>, mut transforms: Query<&mut Transform>| -> Result {
-                let mut transform = transforms
-                    .get_mut(trigger.target)
-                    .context("TODO: can this return an error?")?;
-                let drag = trigger.event();
+fn load_assets(mut commands: Commands, asset_server: Res<AssetServer>) {
+    let white_pawn = asset_server.load("white_pawn.png");
+    let white_knight = asset_server.load("white_knight.png");
+    let white_bishop = asset_server.load("white_bishop.png");
+    let white_rook = asset_server.load("white_rook.png");
+    let white_queen = asset_server.load("white_queen.png");
+    let white_king = asset_server.load("white_king.png");
 
-                transform.translation.x += drag.delta.x;
-                transform.translation.y -= drag.delta.y;
-                Ok(())
-            },
-        )
-        .observe(
-            |trigger: Trigger<Pointer<DragEnd>>,
-             transforms: Query<&mut Transform>,
-             piece_ins: Query<&PieceIn>|
-             -> Result { snap_piece_to_tile(trigger.target, transforms, piece_ins) },
-        )
-        // this is a bit of a hack to make sure the piece snaps to the tile,
-        // even if DragEnd doesn't actually run because the drag distance is too small or even zero
-        // we should be able to make this better in the future when we're able to order observer systems (which is being worked on in bevy)
-        .observe(
-            |trigger: Trigger<Pointer<Click>>,
-             transforms: Query<&mut Transform>,
-             piece_ins: Query<&PieceIn>|
-             -> Result { snap_piece_to_tile(trigger.target, transforms, piece_ins) },
-        );
+    let black_pawn = asset_server.load("black_pawn.png");
+    let black_knight = asset_server.load("black_knight.png");
+    let black_bishop = asset_server.load("black_bishop.png");
+    let black_rook = asset_server.load("black_rook.png");
+    let black_queen = asset_server.load("black_queen.png");
+    let black_king = asset_server.load("black_king.png");
+
+    let piece_assets = PieceAssets {
+        white_pawn,
+        white_knight,
+        white_bishop,
+        white_rook,
+        white_queen,
+        white_king,
+        black_pawn,
+        black_knight,
+        black_bishop,
+        black_rook,
+        black_queen,
+        black_king,
+    };
+    commands.insert_resource(piece_assets);
 }
 
-fn snap_piece_to_tile(
-    target: Entity,
-    mut transforms: Query<&mut Transform>,
-    piece_ins: Query<&PieceIn>,
+fn setup(mut commands: Commands, piece_assets: Res<PieceAssets>) {
+    commands.spawn(Camera2d);
+
+    for (piece, square) in CHESS_INITIAL_POSITION {
+        let file = square.file();
+        let rank = square.rank();
+        let x = (u8::from(file) as f32) * PIECE_SPRITE_SIZE - PIECE_SPRITE_SIZE * 4.0;
+        let y = (u8::from(rank) as f32) * PIECE_SPRITE_SIZE - PIECE_SPRITE_SIZE * 4.0;
+        if let Some((piece, color)) = piece {
+            // spawn the piece
+            commands.spawn((
+                Sprite::from_image(piece_assets.get_image(piece, color)),
+                Pickable {
+                    is_hoverable: true,
+                    should_block_lower: false,
+                },
+                ColoredPiece { piece, color },
+                square,
+                Transform::from_xyz(x, y, 1.0),
+            ));
+        } else {
+            commands.spawn((
+                Pickable {
+                    is_hoverable: true,
+                    should_block_lower: false,
+                },
+                square,
+                Transform::from_xyz(x, y, 1.0),
+            ));
+        }
+
+        // spawn the square
+        commands
+            .spawn((
+                square,
+                IgnoreSquare,
+                Pickable::default(),
+                Sprite::from_color(
+                    if (u8::from(rank) + u8::from(file)) % 2 == 0 {
+                        Color::srgb(0.1, 0.1, 0.1) // dark color
+                    } else {
+                        Color::srgb(0.9, 0.9, 0.9) // light color
+                    },
+                    Vec2::new(PIECE_SPRITE_SIZE, PIECE_SPRITE_SIZE),
+                ),
+                Transform::from_xyz(x, y, 0.0),
+            ))
+            .observe(
+                |drop: Trigger<Pointer<DragDrop>>,
+                 squares: Query<&Square>,
+                 mut commands: Commands|
+                 -> Result {
+                    let from = squares.get(drop.dropped)?;
+                    let to = squares.get(drop.target)?;
+
+                    // TODO: needs to check if needs promotion
+                    commands.trigger(chess_plugin::Move {
+                        from: *from,
+                        to: *to,
+                        promotion: None,
+                    });
+
+                    Ok(())
+                },
+            );
+    }
+}
+
+fn square_to_transform(square: Square, z: f32) -> Transform {
+    let file = square.file();
+    let rank = square.rank();
+    let x = (u8::from(file) as f32) * PIECE_SPRITE_SIZE - PIECE_SPRITE_SIZE * 4.0;
+    let y = (u8::from(rank) as f32) * PIECE_SPRITE_SIZE - PIECE_SPRITE_SIZE * 4.0;
+    Transform::from_xyz(x, y, z)
+}
+
+fn update_piece_transforms_and_images(
+    mut piece_transforms: Query<(&Square, Option<&ColoredPiece>, Entity), Without<IgnoreSquare>>,
+    mut commands: Commands,
+    piece_assets: Res<PieceAssets>,
 ) -> Result {
-    let piece_in = match piece_ins.get(target) {
-        Ok(piece_in) => piece_in,
-        Err(_) => return Ok(()),
-    };
-
-    let tile_translation = transforms.get(piece_in.0)?.translation;
-
-    let mut piece_tr = transforms.get_mut(target)?;
-
-    piece_tr.translation.x = tile_translation.x;
-    piece_tr.translation.y = tile_translation.y;
-    piece_tr.translation.z = 1.0;
-
+    for (square, colored_piece, entity) in piece_transforms.iter_mut() {
+        commands.entity(entity).remove::<(Transform, Sprite)>();
+        let Some(colored_piece) = colored_piece else {
+            continue;
+        };
+        commands.entity(entity).insert((
+            Sprite::from_image(piece_assets.get_image(colored_piece.piece, colored_piece.color)),
+            square_to_transform(*square, 1.0),
+        ));
+    }
     Ok(())
 }
