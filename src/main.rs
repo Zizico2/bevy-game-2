@@ -180,3 +180,11 @@ fn update_piece_transforms_and_images(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test() {
+        assert!(true);
+    }
+}
