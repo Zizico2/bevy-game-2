@@ -2,10 +2,7 @@ mod chess_plugin;
 
 use bevy::{dev_tools::fps_overlay::FpsOverlayPlugin, prelude::*};
 
-use chess_plugin::{ALL_SQUARES, ChessPlugin, ColoredPiece, PostMove, Square};
-
-#[derive(Event, Clone, Copy)]
-struct PiecesUiUpdateQueued;
+use chess_plugin::{ALL_SQUARES, ChessPlugin, ColoredPiece, Square};
 
 fn main() {
     let mut app = App::new();
@@ -19,33 +16,7 @@ fn main() {
         picking_mode: SpritePickingMode::BoundingBox,
         ..Default::default()
     })
-    .add_systems(Startup, (load_assets, setup.after(load_assets)))
-    .add_observer(|_: Trigger<PostMove>, mut commands: Commands| {
-        commands.trigger(PiecesUiUpdateQueued);
-    })
-    .add_observer(
-        |_: Trigger<PiecesUiUpdateQueued>,
-         mut piece_transforms: Query<(&Square, Option<&ColoredPiece>, Entity)>,
-         mut commands: Commands,
-         piece_assets: Res<PieceAssets>|
-         -> Result {
-            // info!("updating piece transforms and images");
-            for (square, colored_piece, entity) in piece_transforms.iter_mut() {
-                commands.entity(entity).remove::<(Transform, Sprite)>();
-                let Some(colored_piece) = colored_piece else {
-                    continue;
-                };
-                commands.entity(entity).insert((
-                    Sprite::from_image(
-                        piece_assets.get_image(colored_piece.piece, colored_piece.color),
-                    ),
-                    square_to_transform(*square, 1.0),
-                ));
-            }
-            Ok(())
-        },
-    );
-
+    .add_systems(Startup, (load_assets, setup.after(load_assets)));
     app.run();
 }
 
@@ -146,6 +117,7 @@ fn setup(mut commands: Commands) {
                     ..Default::default()
                 },
                 square,
+                square_to_transform(square, 1.0),
             ))
             .observe(
                 |pressed: Trigger<Pointer<Pressed>>, mut transforms: Query<&mut Transform>| {
@@ -168,9 +140,37 @@ fn setup(mut commands: Commands) {
                     Ok(())
                 },
             )
-            .observe(|_: Trigger<Pointer<Released>>, mut commands: Commands| {
-                commands.trigger(PiecesUiUpdateQueued);
-            });
+            .observe(
+                |pressed: Trigger<Pointer<Released>>,
+                 mut transforms: Query<(&mut Transform, &Square)>| {
+                    let (mut transform, square) = transforms.get_mut(pressed.target())?;
+
+                    *transform = square_to_transform(*square, 1.0);
+
+                    Ok(())
+                },
+            )
+            .observe(
+                |trigger: Trigger<OnAdd, ColoredPiece>,
+                 pieces: Query<&ColoredPiece>,
+                 mut commands: Commands,
+                 piece_assets: Res<PieceAssets>|
+                 -> Result {
+                    let piece = pieces.get(trigger.target())?;
+                    commands
+                        .entity(trigger.target())
+                        .insert((Sprite::from_image(
+                            piece_assets.get_image(piece.piece, piece.color),
+                        ),));
+
+                    Ok(())
+                },
+            )
+            .observe(
+                |trigger: Trigger<OnRemove, ColoredPiece>, mut commands: Commands| {
+                    commands.entity(trigger.target()).remove::<Sprite>();
+                },
+            );
 
         // spawn the square
         commands

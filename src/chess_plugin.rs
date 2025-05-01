@@ -3,6 +3,16 @@ use num_enum::IntoPrimitive;
 
 pub struct ChessPlugin;
 
+#[derive(Event, Clone, Copy)]
+pub struct Move {
+    pub from: Square,
+    pub to: Square,
+    pub promotion: Option<Piece>,
+}
+
+#[derive(Event, Clone, Copy)]
+struct PieceUpdateQueued;
+
 impl Plugin for ChessPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<BoardRes>();
@@ -19,16 +29,6 @@ pub enum Color {
     White,
     Black,
 }
-
-#[derive(Event, Clone, Copy)]
-pub struct Move {
-    pub from: Square,
-    pub to: Square,
-    pub promotion: Option<Piece>,
-}
-
-#[derive(Event, Clone, Copy)]
-pub struct PostMove;
 
 impl From<Move> for cozy_chess::Move {
     fn from(value: Move) -> Self {
@@ -64,39 +64,45 @@ impl From<cozy_chess::Color> for Color {
     }
 }
 
-#[derive(Event, Clone, Copy)]
-pub struct PieceUpdateQueued;
-
 fn setup_move(app: &mut App) {
     app.add_observer(
         |_: Trigger<PieceUpdateQueued>,
          mut commands: Commands,
          board: Res<BoardRes>,
-         squares: Query<(&Square, Entity), Without<IgnoreSquare>>| {
+         squares: Query<(&Square, Entity)>|
+         -> Result {
             for (square, entity) in squares.iter() {
                 let piece_on = board.0.piece_on(square.into());
                 let color_on = board.0.color_on(square.into());
-                commands.entity(entity).remove::<ColoredPiece>();
-                if let (Some(piece), Some(color)) = (piece_on, color_on) {
-                    commands.entity(entity).insert(ColoredPiece {
-                        piece: piece.into(),
-                        color: color.into(),
-                    });
-                }
 
-                commands.trigger(PostMove);
+                match (piece_on, color_on) {
+                    (Some(piece), Some(color)) => {
+                        commands.entity(entity).remove::<ColoredPiece>();
+                        commands.entity(entity).insert(ColoredPiece {
+                            piece: piece.into(),
+                            color: color.into(),
+                        });
+                    }
+                    (None, None) => {
+                        commands.entity(entity).remove::<ColoredPiece>();
+                    }
+                    _ => {
+                        return Err("piece and color mismatch".into());
+                    }
+                }
             }
+            Ok(())
         },
     )
     .add_observer(
         |event: Trigger<Move>, mut board: ResMut<BoardRes>, mut commands: Commands| -> Result {
-            let mv: Move = *event;
+            let mv = (*event).into();
 
-            let side_to_move = board.0.side_to_move();
-            if board.0.try_play(mv.into()).is_err() {
+            if !board.0.is_legal(mv) {
                 // ignore illegal moves
                 return Ok(());
             }
+            board.0.play_unchecked(mv.into());
 
             // TODO
             match board.0.status() {
@@ -107,7 +113,7 @@ fn setup_move(app: &mut App) {
                     eprintln!("Drawn!");
                 }
                 cozy_chess::GameStatus::Won => {
-                    eprintln!("Checkmate! {} wins!", side_to_move);
+                    eprintln!("Checkmate!");
                 }
             }
 
@@ -117,12 +123,6 @@ fn setup_move(app: &mut App) {
         },
     );
 }
-
-/// this plugin queries for squares internally but the square component is public
-/// if the user wants to use the Square component they can also add the IgnoreSquare component so that this plugin can ignore it
-/// this is useful for example if the user wants to use the Square component for something else, like drawing a chessboard
-#[derive(Component, Clone, Copy)]
-pub struct IgnoreSquare;
 
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 pub enum Square {
