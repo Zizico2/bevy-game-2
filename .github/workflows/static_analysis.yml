@@ -1,0 +1,36 @@
+name: static_analysis
+
+on:
+  push:
+
+jobs:
+  cargo_fmt:
+    runs-on: ubuntu-latest
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+      - 
+        name: Format
+        run: cargo fmt --all --check
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      -
+        name: Build
+        uses: docker/bake-action@v6
+        with:
+          source: .
+          files: ci/docker-bake.hcl
+          targets: clippy
+          push: false
+          load: true
+      -
+        name: Run
+        run: docker run --rm clippy

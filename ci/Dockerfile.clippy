@@ -1,0 +1,24 @@
+FROM docker.io/rust:1.86.0-slim-bookworm AS chef
+ARG CARGO_CHEF_VERSION=0.1.71
+USER root
+RUN <<EOF
+rustup component add llvm-tools
+rustup component add clippy
+rustup component add rustfmt
+apt-get update && apt-get install -y --no-install-recommends wget && apt-get clean && rm -rf /var/lib/apt/lists/*
+wget https://github.com/cargo-bins/cargo-binstall/releases/latest/download/cargo-binstall-x86_64-unknown-linux-musl.tgz -O - | tar -xvz -C .
+./cargo-binstall cargo-chef --no-confirm --locked --version $CARGO_CHEF_VERSION
+EOF
+WORKDIR /app
+
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS builder
+COPY --from=planner /app/recipe.json recipe.json
+RUN --mount=type=ssh cargo chef cook --clippy --workspace --locked --all-targets --all-features --recipe-path recipe.json
+COPY . .
+
+FROM builder AS runtime
+ENTRYPOINT ["cargo", "clippy", "--workspace", "--frozen", "--all-targets", "--all-features", "--", "-D", "warnings"]

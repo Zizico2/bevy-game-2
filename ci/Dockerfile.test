@@ -1,0 +1,41 @@
+FROM docker.io/rust:1.86.0-slim-bookworm AS chef
+ARG CARGO_CHEF_VERSION=0.1.71
+ARG CARGO_NEXTEST_VERSION=0.9.94
+ARG CARGO_LLVM_COV_VERSION=0.6.16
+USER root
+RUN <<EOF
+apt-get update && apt-get install -y --no-install-recommends wget && apt-get clean && rm -rf /var/lib/apt/lists/*
+wget https://github.com/cargo-bins/cargo-binstall/releases/latest/download/cargo-binstall-x86_64-unknown-linux-musl.tgz -O - | tar -xvz -C .
+./cargo-binstall cargo-chef --no-confirm --locked --version $CARGO_CHEF_VERSION
+./cargo-binstall cargo-nextest --no-confirm --locked --version $CARGO_NEXTEST_VERSION
+./cargo-binstall cargo-llvm-cov --no-confirm --locked --version  $CARGO_LLVM_COV_VERSION
+EOF
+WORKDIR /app
+
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS builder
+COPY --from=planner /app/recipe.json recipe.json
+RUN --mount=type=ssh cargo chef cook --workspace --locked --all-targets --profile test --recipe-path recipe.json
+COPY . .
+RUN cargo llvm-cov nextest-archive --workspace --frozen --all-targets --archive-file nextest-archive.tar.zst
+
+FROM chef AS runtime
+COPY --from=builder /app/nextest-archive.tar.zst nextest-archive.tar.zst
+COPY . .
+# this allows partitioning the tests, which cloud speed up the test run if there are many tests
+# the default is 1/1 (N/T), which means no partitioning
+# this would need changes in the test workflow, to partition the runs and set N and T accordingly
+# see https://nexte.st/docs/ci-features/partitioning/?h=parti,
+# see https://github.com/nextest-rs/reuse-build-partition-example/blob/main/.github/workflows/ci.yml
+# this would then probaly mean we can't run the workflow locally, with `act`, as it doesn't support github actions matrix strategy
+ENV N=1
+ENV T=1
+COPY --chmod=755 <<EOT /entrypoint.sh
+#!/usr/bin/env bash
+set -e
+cargo llvm-cov nextest --archive-file nextest-archive.tar.zst --retries 2 --no-fail-fast --partition count:${N}/${T}
+EOT
+ENTRYPOINT ["/entrypoint.sh"]
