@@ -184,6 +184,7 @@ fn update_piece_transforms_and_images(
 #[cfg(test)]
 mod tests {
     #[test]
+    #[expect(clippy::assertions_on_constants)]
     fn test() {
         assert!(true);
     }
