@@ -1,7 +1,6 @@
 mod chess_plugin;
-use bevy::prelude::Color;
 use bevy::prelude::*;
-use chess_plugin::{ALL_SQUARES, ChessPlugin, ColoredPiece, Square, update_pieces};
+use chess_plugin::{ALL_SQUARES, BoardRes, ChessPlugin, ColoredPiece, Square, update_pieces};
 
 fn main() {
     let mut app = App::new();
@@ -13,7 +12,9 @@ fn main() {
         .add_systems(Startup, (load_assets, setup.after(load_assets)))
         .add_systems(
             Update,
-            update_piece_transforms_and_images.after(update_pieces),
+            update_piece_transforms_and_images
+                .run_if(resource_changed::<BoardRes>)
+                .after(update_pieces),
         );
 
     app.run();
@@ -109,13 +110,45 @@ fn setup(mut commands: Commands) {
         let x = (u8::from(file) as f32) * PIECE_SPRITE_SIZE - PIECE_SPRITE_SIZE * 4.0;
         let y = (u8::from(rank) as f32) * PIECE_SPRITE_SIZE - PIECE_SPRITE_SIZE * 4.0;
 
-        commands.spawn((
-            Pickable {
-                is_hoverable: true,
-                should_block_lower: false,
-            },
-            square,
-        ));
+        commands
+            .spawn((
+                Pickable {
+                    should_block_lower: false,
+                    ..Default::default()
+                },
+                square,
+            ))
+            .observe(
+                |pressed: Trigger<Pointer<Pressed>>, mut transforms: Query<&mut Transform>| {
+                    let mut transform = transforms.get_mut(pressed.target())?;
+                    let position = pressed.hit.position.ok_or("need hit position")?;
+                    transform.translation.x = position.x;
+                    transform.translation.y = position.y;
+                    transform.translation.z = 2.0;
+
+                    Ok(())
+                },
+            )
+            .observe(
+                |dragged: Trigger<Pointer<Drag>>, mut transforms: Query<&mut Transform>| {
+                    let mut transform = transforms.get_mut(dragged.target())?;
+                    let delta = dragged.delta;
+                    transform.translation.x += delta.x;
+                    transform.translation.y -= delta.y;
+
+                    Ok(())
+                },
+            )
+            .observe(
+                |released: Trigger<Pointer<Released>>,
+                 mut transforms: Query<(&mut Transform, &Square)>| {
+                    let (mut transform, square) = transforms.get_mut(released.target())?;
+                    let square_position = square_to_transform(*square, 1.0);
+                    *transform = square_position;
+
+                    Ok(())
+                },
+            );
 
         // spawn the square
         commands
@@ -168,6 +201,7 @@ fn update_piece_transforms_and_images(
     mut commands: Commands,
     piece_assets: Res<PieceAssets>,
 ) -> Result {
+    // info!("updating piece transforms and images");
     for (square, colored_piece, entity) in piece_transforms.iter_mut() {
         commands.entity(entity).remove::<(Transform, Sprite)>();
         let Some(colored_piece) = colored_piece else {
