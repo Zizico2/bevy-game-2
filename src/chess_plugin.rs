@@ -6,7 +6,11 @@ pub struct ChessPlugin;
 impl Plugin for ChessPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<BoardRes>();
+
         setup_move(app);
+        app.add_systems(PostStartup, |mut commands: Commands| {
+            commands.trigger(PieceUpdateQueued);
+        });
     }
 }
 
@@ -22,6 +26,9 @@ pub struct Move {
     pub to: Square,
     pub promotion: Option<Piece>,
 }
+
+#[derive(Event, Clone, Copy)]
+pub struct PostMove;
 
 impl From<Move> for cozy_chess::Move {
     fn from(value: Move) -> Self {
@@ -57,54 +64,58 @@ impl From<cozy_chess::Color> for Color {
     }
 }
 
-pub fn update_pieces(
-    mut commands: Commands,
-    board: Res<BoardRes>,
-    squares: Query<(&Square, Entity), Without<IgnoreSquare>>,
-) {
-    for (square, entity) in squares.iter() {
-        let piece_on = board.0.piece_on(square.into());
-        let color_on = board.0.color_on(square.into());
-        commands.entity(entity).remove::<ColoredPiece>();
-        if let (Some(piece), Some(color)) = (piece_on, color_on) {
-            commands.entity(entity).insert(ColoredPiece {
-                piece: piece.into(),
-                color: color.into(),
-            });
-        }
-    }
-}
+#[derive(Event, Clone, Copy)]
+pub struct PieceUpdateQueued;
 
 fn setup_move(app: &mut App) {
-    app.add_systems(Update, update_pieces.run_if(resource_changed::<BoardRes>))
-        .add_observer(
-            |event: Trigger<Move>, mut board: ResMut<BoardRes>| -> Result {
-                let mv: Move = *event;
-
-                let side_to_move = board.0.side_to_move();
-                if board.0.try_play(mv.into()).is_err() {
-                    // ignore illegal moves
-                    return Ok(());
+    app.add_observer(
+        |_: Trigger<PieceUpdateQueued>,
+         mut commands: Commands,
+         board: Res<BoardRes>,
+         squares: Query<(&Square, Entity), Without<IgnoreSquare>>| {
+            for (square, entity) in squares.iter() {
+                let piece_on = board.0.piece_on(square.into());
+                let color_on = board.0.color_on(square.into());
+                commands.entity(entity).remove::<ColoredPiece>();
+                if let (Some(piece), Some(color)) = (piece_on, color_on) {
+                    commands.entity(entity).insert(ColoredPiece {
+                        piece: piece.into(),
+                        color: color.into(),
+                    });
                 }
 
-                // TODO
-                match board.0.status() {
-                    cozy_chess::GameStatus::Ongoing => {
-                        // continue the game
-                    }
-                    cozy_chess::GameStatus::Drawn => {
-                        eprintln!("Drawn!");
-                        return Ok(());
-                    }
-                    cozy_chess::GameStatus::Won => {
-                        eprintln!("Checkmate! {} wins!", side_to_move);
-                        return Ok(());
-                    }
-                }
+                commands.trigger(PostMove);
+            }
+        },
+    )
+    .add_observer(
+        |event: Trigger<Move>, mut board: ResMut<BoardRes>, mut commands: Commands| -> Result {
+            let mv: Move = *event;
 
-                Ok(())
-            },
-        );
+            let side_to_move = board.0.side_to_move();
+            if board.0.try_play(mv.into()).is_err() {
+                // ignore illegal moves
+                return Ok(());
+            }
+
+            // TODO
+            match board.0.status() {
+                cozy_chess::GameStatus::Ongoing => {
+                    // continue the game
+                }
+                cozy_chess::GameStatus::Drawn => {
+                    eprintln!("Drawn!");
+                }
+                cozy_chess::GameStatus::Won => {
+                    eprintln!("Checkmate! {} wins!", side_to_move);
+                }
+            }
+
+            commands.trigger(PieceUpdateQueued);
+
+            Ok(())
+        },
+    );
 }
 
 /// this plugin queries for squares internally but the square component is public

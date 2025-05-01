@@ -1,9 +1,11 @@
 mod chess_plugin;
-use std::ops::DerefMut;
 
 use bevy::{dev_tools::fps_overlay::FpsOverlayPlugin, prelude::*};
 
-use chess_plugin::{ALL_SQUARES, BoardRes, ChessPlugin, ColoredPiece, Square, update_pieces};
+use chess_plugin::{ALL_SQUARES, ChessPlugin, ColoredPiece, PostMove, Square};
+
+#[derive(Event, Clone, Copy)]
+struct PiecesUiUpdateQueued;
 
 fn main() {
     let mut app = App::new();
@@ -18,13 +20,30 @@ fn main() {
         ..Default::default()
     })
     .add_systems(Startup, (load_assets, setup.after(load_assets)))
-    .add_systems(
-        Update,
-        // TODO: ChessPlugin should trigger some pieces_updated event
-        // TODO: update_piece_transforms_and_images should be triggered by the event
-        update_piece_transforms_and_images
-            .run_if(resource_changed::<BoardRes>)
-            .after(update_pieces),
+    .add_observer(|_: Trigger<PostMove>, mut commands: Commands| {
+        commands.trigger(PiecesUiUpdateQueued);
+    })
+    .add_observer(
+        |_: Trigger<PiecesUiUpdateQueued>,
+         mut piece_transforms: Query<(&Square, Option<&ColoredPiece>, Entity)>,
+         mut commands: Commands,
+         piece_assets: Res<PieceAssets>|
+         -> Result {
+            // info!("updating piece transforms and images");
+            for (square, colored_piece, entity) in piece_transforms.iter_mut() {
+                commands.entity(entity).remove::<(Transform, Sprite)>();
+                let Some(colored_piece) = colored_piece else {
+                    continue;
+                };
+                commands.entity(entity).insert((
+                    Sprite::from_image(
+                        piece_assets.get_image(colored_piece.piece, colored_piece.color),
+                    ),
+                    square_to_transform(*square, 1.0),
+                ));
+            }
+            Ok(())
+        },
     );
 
     app.run();
@@ -149,12 +168,9 @@ fn setup(mut commands: Commands) {
                     Ok(())
                 },
             )
-            .observe(
-                |_: Trigger<Pointer<Released>>, mut board: ResMut<BoardRes>| {
-                    // trigger the board to update
-                    board.deref_mut();
-                },
-            );
+            .observe(|_: Trigger<Pointer<Released>>, mut commands: Commands| {
+                commands.trigger(PiecesUiUpdateQueued);
+            });
 
         // spawn the square
         commands
@@ -200,25 +216,6 @@ fn square_to_transform(square: Square, z: f32) -> Transform {
     let x = (u8::from(file) as f32) * PIECE_SPRITE_SIZE - PIECE_SPRITE_SIZE * 4.0;
     let y = (u8::from(rank) as f32) * PIECE_SPRITE_SIZE - PIECE_SPRITE_SIZE * 4.0;
     Transform::from_xyz(x, y, z)
-}
-
-fn update_piece_transforms_and_images(
-    mut piece_transforms: Query<(&Square, Option<&ColoredPiece>, Entity)>,
-    mut commands: Commands,
-    piece_assets: Res<PieceAssets>,
-) -> Result {
-    // info!("updating piece transforms and images");
-    for (square, colored_piece, entity) in piece_transforms.iter_mut() {
-        commands.entity(entity).remove::<(Transform, Sprite)>();
-        let Some(colored_piece) = colored_piece else {
-            continue;
-        };
-        commands.entity(entity).insert((
-            Sprite::from_image(piece_assets.get_image(colored_piece.piece, colored_piece.color)),
-            square_to_transform(*square, 1.0),
-        ));
-    }
-    Ok(())
 }
 
 #[cfg(test)]
