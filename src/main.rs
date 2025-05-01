@@ -1,21 +1,31 @@
 mod chess_plugin;
-use bevy::prelude::*;
+use std::ops::DerefMut;
+
+use bevy::{dev_tools::fps_overlay::FpsOverlayPlugin, prelude::*};
+
 use chess_plugin::{ALL_SQUARES, BoardRes, ChessPlugin, ColoredPiece, Square, update_pieces};
 
 fn main() {
     let mut app = App::new();
-    app.add_plugins((DefaultPlugins, MeshPickingPlugin, ChessPlugin))
-        .insert_resource(SpritePickingSettings {
-            picking_mode: SpritePickingMode::BoundingBox,
-            ..Default::default()
-        })
-        .add_systems(Startup, (load_assets, setup.after(load_assets)))
-        .add_systems(
-            Update,
-            update_piece_transforms_and_images
-                .run_if(resource_changed::<BoardRes>)
-                .after(update_pieces),
-        );
+    app.add_plugins((
+        FpsOverlayPlugin::default(),
+        DefaultPlugins,
+        MeshPickingPlugin,
+        ChessPlugin,
+    ))
+    .insert_resource(SpritePickingSettings {
+        picking_mode: SpritePickingMode::BoundingBox,
+        ..Default::default()
+    })
+    .add_systems(Startup, (load_assets, setup.after(load_assets)))
+    .add_systems(
+        Update,
+        // TODO: ChessPlugin should trigger some pieces_updated event
+        // TODO: update_piece_transforms_and_images should be triggered by the event
+        update_piece_transforms_and_images
+            .run_if(resource_changed::<BoardRes>)
+            .after(update_pieces),
+    );
 
     app.run();
 }
@@ -140,13 +150,9 @@ fn setup(mut commands: Commands) {
                 },
             )
             .observe(
-                |released: Trigger<Pointer<Released>>,
-                 mut transforms: Query<(&mut Transform, &Square)>| {
-                    let (mut transform, square) = transforms.get_mut(released.target())?;
-                    let square_position = square_to_transform(*square, 1.0);
-                    *transform = square_position;
-
-                    Ok(())
+                |_: Trigger<Pointer<Released>>, mut board: ResMut<BoardRes>| {
+                    // trigger the board to update
+                    board.deref_mut();
                 },
             );
 
