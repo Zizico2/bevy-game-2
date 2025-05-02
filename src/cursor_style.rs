@@ -45,8 +45,6 @@ impl Component for OnHover {
     const STORAGE_TYPE: StorageType = StorageType::Table;
     type Mutability = Mutable;
 
-    /// Hooks can also be registered during component initialization by
-
     fn on_add() -> Option<ComponentHook> {
         Some(|mut world, HookContext { entity, .. }| {
             // is there a way to make this not panic?
@@ -82,8 +80,7 @@ impl Component for OnHover {
                             commands.entity(*window).insert(cursor.clone());
                         }
 
-                        if let Some(mut entity_cursor_context) =
-                            entity_cursor_context.get_mut(ev.target()).ok()
+                        if let Ok(mut entity_cursor_context) = entity_cursor_context.get_mut(ev.target())
                         {
                             entity_cursor_context.cursor.insert(key);
                         } else {
@@ -152,8 +149,6 @@ impl Component for OnClick {
     const STORAGE_TYPE: StorageType = StorageType::Table;
     type Mutability = Mutable;
 
-    /// Hooks can also be registered during component initialization by
-
     fn on_add() -> Option<ComponentHook> {
         Some(|mut world, HookContext { entity, .. }| {
             // is there a way to make this not panic?
@@ -184,8 +179,7 @@ impl Component for OnClick {
 
                         commands.entity(*window).insert(cursor.clone());
 
-                        if let Some(mut entity_cursor_context) =
-                            entity_cursor_context.get_mut(ev.target()).ok()
+                        if let Ok(mut entity_cursor_context) = entity_cursor_context.get_mut(ev.target())
                         {
                             entity_cursor_context.cursor.insert(key);
                         } else {

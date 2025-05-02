@@ -112,6 +112,7 @@ fn load_assets(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.insert_resource(piece_assets);
 }
 
+#[expect(clippy::too_many_arguments)]
 fn spawn_promotion_picker_piece<R: Relationship>(
     commands: &mut RelatedSpawnerCommands<R>,
     piece_assets: &PieceAssets,
