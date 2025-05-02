@@ -1,10 +1,13 @@
 use bevy::prelude::*;
 use num_enum::IntoPrimitive;
 
+mod board;
+pub use board::*;
+
 pub struct ChessPlugin;
 
 #[derive(Event, Clone, Copy)]
-pub struct Move {
+pub struct MoveRequest {
     pub from: Square,
     pub to: Square,
     pub promotion: Option<Piece>,
@@ -15,7 +18,7 @@ struct PieceUpdateQueued;
 
 impl Plugin for ChessPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<BoardRes>();
+        app.init_resource::<Board>();
 
         setup_move(app);
         app.add_systems(PostStartup, |mut commands: Commands| {
@@ -30,8 +33,8 @@ pub enum Color {
     Black,
 }
 
-impl From<Move> for cozy_chess::Move {
-    fn from(value: Move) -> Self {
+impl From<MoveRequest> for cozy_chess::Move {
+    fn from(value: MoveRequest) -> Self {
         cozy_chess::Move {
             from: value.from.into(),
             to: value.to.into(),
@@ -39,9 +42,6 @@ impl From<Move> for cozy_chess::Move {
         }
     }
 }
-
-#[derive(Resource, Default)]
-pub struct BoardRes(pub cozy_chess::Board);
 
 impl From<cozy_chess::Piece> for Piece {
     fn from(value: cozy_chess::Piece) -> Self {
@@ -68,20 +68,18 @@ fn setup_move(app: &mut App) {
     app.add_observer(
         |_: Trigger<PieceUpdateQueued>,
          mut commands: Commands,
-         board: Res<BoardRes>,
-         squares: Query<(&Square, Entity)>|
-         -> Result {
+         board: Res<Board>,
+         squares: Query<(&Square, Entity)>| {
             for (square, entity) in squares.iter() {
-                let piece_on = board.0.piece_on(square.into());
-                let color_on = board.0.color_on(square.into());
+                let piece_on = board.piece_on(*square);
+                let color_on = board.color_on(*square);
 
                 match (piece_on, color_on) {
                     (Some(piece), Some(color)) => {
                         commands.entity(entity).remove::<ColoredPiece>();
-                        commands.entity(entity).insert(ColoredPiece {
-                            piece: piece.into(),
-                            color: color.into(),
-                        });
+                        commands
+                            .entity(entity)
+                            .insert(ColoredPiece { piece, color });
                     }
                     (None, None) => {
                         commands.entity(entity).remove::<ColoredPiece>();
@@ -95,24 +93,24 @@ fn setup_move(app: &mut App) {
         },
     )
     .add_observer(
-        |event: Trigger<Move>, mut board: ResMut<BoardRes>, mut commands: Commands| -> Result {
-            let mv = (*event).into();
+        |event: Trigger<MoveRequest>, mut board: ResMut<Board>, mut commands: Commands| {
+            let mv = *event;
 
-            if !board.0.is_legal(mv) {
+            if !board.is_legal(mv) {
                 // ignore illegal moves
                 return Ok(());
             }
-            board.0.play_unchecked(mv.into());
+            board.play_unchecked(mv);
 
             // TODO
-            match board.0.status() {
-                cozy_chess::GameStatus::Ongoing => {
+            match board.status() {
+                GameStatus::Ongoing => {
                     // continue the game
                 }
-                cozy_chess::GameStatus::Drawn => {
+                GameStatus::Drawn => {
                     eprintln!("Drawn!");
                 }
-                cozy_chess::GameStatus::Won => {
+                GameStatus::Won => {
                     eprintln!("Checkmate!");
                 }
             }
@@ -122,6 +120,21 @@ fn setup_move(app: &mut App) {
             Ok(())
         },
     );
+}
+
+pub enum GameStatus {
+    Ongoing,
+    Drawn,
+    Won,
+}
+impl From<cozy_chess::GameStatus> for GameStatus {
+    fn from(value: cozy_chess::GameStatus) -> Self {
+        match value {
+            cozy_chess::GameStatus::Ongoing => GameStatus::Ongoing,
+            cozy_chess::GameStatus::Drawn => GameStatus::Drawn,
+            cozy_chess::GameStatus::Won => GameStatus::Won,
+        }
+    }
 }
 
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
@@ -299,6 +312,21 @@ pub enum Rank {
     Sixth,
     Seventh,
     Eighth,
+}
+
+impl From<Rank> for cozy_chess::Rank {
+    fn from(value: Rank) -> Self {
+        match value {
+            Rank::First => cozy_chess::Rank::First,
+            Rank::Second => cozy_chess::Rank::Second,
+            Rank::Third => cozy_chess::Rank::Third,
+            Rank::Fourth => cozy_chess::Rank::Fourth,
+            Rank::Fifth => cozy_chess::Rank::Fifth,
+            Rank::Sixth => cozy_chess::Rank::Sixth,
+            Rank::Seventh => cozy_chess::Rank::Seventh,
+            Rank::Eighth => cozy_chess::Rank::Eighth,
+        }
+    }
 }
 
 impl Square {

@@ -1,8 +1,16 @@
 mod chess_plugin;
+mod cursor_style;
 
-use bevy::{dev_tools::fps_overlay::FpsOverlayPlugin, prelude::*};
+use bevy::{
+    dev_tools::fps_overlay::FpsOverlayPlugin,
+    ecs::relationship::{RelatedSpawnerCommands, Relationship},
+    prelude::*,
+    window::SystemCursorIcon,
+    winit::cursor::CursorIcon,
+};
 
-use chess_plugin::{ALL_SQUARES, ChessPlugin, ColoredPiece, Square};
+use chess_plugin::{ALL_SQUARES, Board, ChessPlugin, ColoredPiece, MoveRequest, Piece, Square};
+use cursor_style::{CursorContext, OnClick, OnHover};
 
 fn main() {
     let mut app = App::new();
@@ -16,6 +24,9 @@ fn main() {
         picking_mode: SpritePickingMode::BoundingBox,
         ..Default::default()
     })
+    .insert_resource(CursorContext::init(CursorIcon::System(
+        SystemCursorIcon::Default,
+    )))
     .add_systems(Startup, (load_assets, setup.after(load_assets)));
     app.run();
 }
@@ -101,6 +112,120 @@ fn load_assets(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.insert_resource(piece_assets);
 }
 
+fn spawn_promotion_picker_piece<R: Relationship>(
+    commands: &mut RelatedSpawnerCommands<R>,
+    piece_assets: &PieceAssets,
+    moved_piece: Entity,
+    current_visibility: Option<Visibility>,
+    mv: MoveRequest,
+    picker_index: usize,
+    picker_piece: Piece,
+    picker_color: chess_plugin::Color,
+) {
+    commands
+        .spawn((
+            Pickable::default(),
+            Sprite::from_image(piece_assets.get_image(picker_piece, picker_color)),
+            Transform::from_xyz(
+                0.0,
+                // TODO: I don't like using "as". There should be a way to convert from usize to f32 cleanly, even if it implies returing a Result
+                PIECE_SPRITE_SIZE * 1.5 - PIECE_SPRITE_SIZE * picker_index as f32,
+                4.0,
+            ),
+            OnHover(CursorIcon::System(SystemCursorIcon::Pointer), 0),
+        ))
+        .observe(
+            move |event: Trigger<Pointer<Click>>,
+                  parents: Query<&ChildOf>,
+                  mut commands: Commands| {
+                commands.trigger(MoveRequest {
+                    promotion: Some(picker_piece),
+                    ..mv
+                });
+
+                commands
+                    .entity(parents.get(event.target())?.parent())
+                    .despawn();
+
+                if let Some(current_visibility) = current_visibility {
+                    commands.entity(moved_piece).insert(current_visibility);
+                } else {
+                    commands.entity(moved_piece).remove::<Visibility>();
+                }
+
+                Ok(())
+            },
+        );
+}
+
+fn spawn_promotion_picker(
+    piece_assets: &PieceAssets,
+    board: &Board,
+    moved_piece: Entity,
+    visibility: Query<&Visibility>,
+    commands: &mut Commands,
+    mv: MoveRequest,
+) {
+    let color = board.side_to_move();
+
+    let Vec2 { x, y } = square_to_xy(mv.to);
+
+    let current_visibility = visibility.get(moved_piece).ok().copied();
+    commands.entity(moved_piece).insert(Visibility::Hidden);
+
+    commands
+        .spawn((
+            Pickable::default(),
+            Sprite::from_color(
+                Color::srgb(0.5, 0.5, 0.5),
+                Vec2::new(PIECE_SPRITE_SIZE, PIECE_SPRITE_SIZE * 4.0),
+            ),
+            Transform::from_xyz(x, y - PIECE_SPRITE_SIZE * 1.5, 3.0),
+        ))
+        .with_children(|commands| {
+            spawn_promotion_picker_piece(
+                commands,
+                piece_assets,
+                moved_piece,
+                current_visibility,
+                mv,
+                0,
+                Piece::Queen,
+                color,
+            );
+            spawn_promotion_picker_piece(
+                commands,
+                piece_assets,
+                moved_piece,
+                current_visibility,
+                mv,
+                1,
+                Piece::Rook,
+                color,
+            );
+            spawn_promotion_picker_piece(
+                commands,
+                piece_assets,
+                moved_piece,
+                current_visibility,
+                mv,
+                2,
+                Piece::Knight,
+                color,
+            );
+            spawn_promotion_picker_piece(
+                commands,
+                piece_assets,
+                moved_piece,
+                current_visibility,
+                mv,
+                3,
+                Piece::Bishop,
+                color,
+            );
+        });
+}
+
 fn setup(mut commands: Commands) {
     commands.spawn(Camera2d);
 
@@ -118,6 +243,8 @@ fn setup(mut commands: Commands) {
                 },
                 square,
                 square_to_transform(square, 1.0),
+                OnHover(CursorIcon::System(SystemCursorIcon::Grab), 0),
+                OnClick(CursorIcon::System(SystemCursorIcon::Grabbing), 1),
             ))
             .observe(
                 |pressed: Trigger<Pointer<Pressed>>, mut transforms: Query<&mut Transform>| {
@@ -154,8 +281,7 @@ fn setup(mut commands: Commands) {
                 |trigger: Trigger<OnAdd, ColoredPiece>,
                  pieces: Query<&ColoredPiece>,
                  mut commands: Commands,
-                 piece_assets: Res<PieceAssets>|
-                 -> Result {
+                 piece_assets: Res<PieceAssets>| {
                     let piece = pieces.get(trigger.target())?;
                     commands
                         .entity(trigger.target())
@@ -188,21 +314,39 @@ fn setup(mut commands: Commands) {
             ))
             .observe(
                 move |drop: Trigger<Pointer<DragDrop>>,
-                      squares: Query<&Square, With<ColoredPiece>>,
-                      mut commands: Commands|
-                      -> Result {
-                    let Ok(from) = squares.get(drop.dropped) else {
+                      mut squares: Query<&Square, With<ColoredPiece>>,
+                      visibility: Query<&Visibility>,
+                      mut commands: Commands,
+                      // this doesn't need to be here if needs_promotion is moved into a different system and triggered with an event
+                      piece_assets: Res<PieceAssets>,
+                      board: Res<Board>| {
+                    let Ok(from) = squares.get_mut(drop.dropped) else {
                         // if the dropped entity is not a piece, do nothing
                         return Ok(());
                     };
+
                     let to = square;
 
-                    // TODO: needs to check if needs promotion
-                    commands.trigger(chess_plugin::Move {
+                    let mv = MoveRequest {
                         from: *from,
                         to,
                         promotion: None,
-                    });
+                    };
+
+                    if board.needs_promotion(mv) {
+                        spawn_promotion_picker(
+                            &piece_assets,
+                            &board,
+                            drop.dropped,
+                            visibility,
+                            &mut commands,
+                            mv,
+                        );
+
+                        return Ok(());
+                    }
+
+                    commands.trigger(mv);
 
                     Ok(())
                 },
@@ -216,6 +360,14 @@ fn square_to_transform(square: Square, z: f32) -> Transform {
     let x = (u8::from(file) as f32) * PIECE_SPRITE_SIZE - PIECE_SPRITE_SIZE * 4.0;
     let y = (u8::from(rank) as f32) * PIECE_SPRITE_SIZE - PIECE_SPRITE_SIZE * 4.0;
     Transform::from_xyz(x, y, z)
+}
+
+fn square_to_xy(square: Square) -> Vec2 {
+    let file = square.file();
+    let rank = square.rank();
+    let x = (u8::from(file) as f32) * PIECE_SPRITE_SIZE - PIECE_SPRITE_SIZE * 4.0;
+    let y = (u8::from(rank) as f32) * PIECE_SPRITE_SIZE - PIECE_SPRITE_SIZE * 4.0;
+    Vec2::new(x, y)
 }
 
 #[cfg(test)]
