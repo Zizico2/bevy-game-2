@@ -4,12 +4,15 @@ use bevy::{
     winit::cursor::CursorIcon,
 };
 use indexmap::IndexSet;
-use slotmap::{DefaultKey, SlotMap};
+use slotmap::DefaultKey;
 
-#[derive(Resource, Default)]
+use crate::index_slot_map::PriorotyIndexSlotMap;
+
+#[derive(Resource)]
 pub struct CursorContext {
-    cursor_slot_map: SlotMap<DefaultKey, CursorIcon>,
-    cursor_index_set: IndexSet<(usize, DefaultKey)>,
+    // cursor_slot_map: SlotMap<DefaultKey, CursorIcon>,
+    // cursor_index_set: IndexSet<(usize, DefaultKey)>,
+    cursor_map: PriorotyIndexSlotMap<CursorIcon>,
 }
 #[derive(Component)]
 struct OnHoverContext {
@@ -25,15 +28,15 @@ struct OnClickContext {
 
 impl CursorContext {
     pub fn init(cursor: CursorIcon) -> Self {
-        let mut cursor_slot_map = SlotMap::with_capacity(1);
-        let key = cursor_slot_map.insert(cursor.clone());
-        let mut cursor_index_set = IndexSet::with_capacity(1);
-        cursor_index_set.insert((0, key));
+        // let mut cursor_slot_map = SlotMap::with_capacity(1);
+        // let key = cursor_slot_map.insert(cursor.clone());
+        // let mut cursor_index_set = IndexSet::with_capacity(1);
+        // cursor_index_set.insert((0, key));
 
-        Self {
-            cursor_slot_map,
-            cursor_index_set,
-        }
+        let mut cursor_map = PriorotyIndexSlotMap::with_capacity(1);
+        cursor_map.insert_prioritezed(0, cursor);
+
+        Self { cursor_map }
     }
 }
 
@@ -69,18 +72,19 @@ impl Component for OnHover {
                           mut entity_cursor_context: Query<&mut OnHoverContext>,
                           mut commands: Commands| {
                         let cursor_context = cursor_context.into_inner();
-                        let key = cursor_context.cursor_slot_map.insert(cursor.clone());
-                        cursor_context
-                            .cursor_index_set
-                            .insert_sorted((component.1, key));
 
-                        let last = cursor_context.cursor_index_set.last().unwrap();
+                        let key = cursor_context
+                            .cursor_map
+                            .insert_prioritezed(component.1, cursor.clone());
 
-                        if last.1 == key {
+                        let last = cursor_context.cursor_map.last().unwrap();
+
+                        if last == key {
                             commands.entity(*window).insert(cursor.clone());
                         }
 
-                        if let Ok(mut entity_cursor_context) = entity_cursor_context.get_mut(ev.target())
+                        if let Ok(mut entity_cursor_context) =
+                            entity_cursor_context.get_mut(ev.target())
                         {
                             entity_cursor_context.cursor.insert(key);
                         } else {
@@ -101,12 +105,9 @@ impl Component for OnHover {
                             .iter()
                         {
                             cursor_context
-                                .cursor_slot_map
-                                .remove(*entity_cursor_context)
+                                .cursor_map
+                                .shift_remove(*entity_cursor_context)
                                 .unwrap();
-                            cursor_context
-                                .cursor_index_set
-                                .shift_remove(&(component.1, *entity_cursor_context));
                         }
                     },
                 )
@@ -120,15 +121,9 @@ impl Component for OnHover {
                         let mut entity_cursor_context =
                             entity_cursor_context.get_mut(ev.target()).ok().unwrap();
                         let cursor = entity_cursor_context.cursor.pop().unwrap();
-                        cursor_context.cursor_slot_map.remove(cursor).unwrap();
-                        cursor_context
-                            .cursor_index_set
-                            .shift_remove(&(component.1, cursor));
+                        cursor_context.cursor_map.shift_remove(cursor).unwrap();
 
-                        let cursor = cursor_context
-                            .cursor_slot_map
-                            .get(cursor_context.cursor_index_set.last().unwrap().1)
-                            .unwrap();
+                        let cursor = cursor_context.cursor_map.last_value().unwrap();
 
                         commands.entity(*window).insert(cursor.clone());
 
@@ -172,14 +167,14 @@ impl Component for OnClick {
                           mut entity_cursor_context: Query<&mut OnClickContext>,
                           mut commands: Commands| {
                         let cursor_context = cursor_context.into_inner();
-                        let key = cursor_context.cursor_slot_map.insert(cursor.clone());
-                        cursor_context
-                            .cursor_index_set
-                            .insert_sorted((component.1, key));
+                        let key = cursor_context
+                            .cursor_map
+                            .insert_prioritezed(component.1, cursor.clone());
 
                         commands.entity(*window).insert(cursor.clone());
 
-                        if let Ok(mut entity_cursor_context) = entity_cursor_context.get_mut(ev.target())
+                        if let Ok(mut entity_cursor_context) =
+                            entity_cursor_context.get_mut(ev.target())
                         {
                             entity_cursor_context.cursor.insert(key);
                         } else {
@@ -202,15 +197,9 @@ impl Component for OnClick {
                             return Ok(());
                         };
                         let cursor = entity_cursor_context.cursor.pop().unwrap();
-                        cursor_context.cursor_slot_map.remove(cursor).unwrap();
-                        cursor_context
-                            .cursor_index_set
-                            .shift_remove(&(component.1, cursor));
+                        cursor_context.cursor_map.shift_remove(cursor).unwrap();
 
-                        let cursor = cursor_context
-                            .cursor_slot_map
-                            .get(cursor_context.cursor_index_set.last().unwrap().1)
-                            .unwrap();
+                        let cursor = cursor_context.cursor_map.last_value().unwrap();
 
                         commands.entity(*window).insert(cursor.clone());
 

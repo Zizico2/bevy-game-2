@@ -1,6 +1,8 @@
 mod chess_plugin;
 mod cursor_style;
 
+mod index_slot_map;
+
 use bevy::{
     dev_tools::fps_overlay::FpsOverlayPlugin,
     ecs::relationship::{RelatedSpawnerCommands, Relationship},
