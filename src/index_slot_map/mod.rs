@@ -32,7 +32,7 @@ impl<T> PriorotyIndexSlotMap<T> {
         self.index_set.sort_by(|a, b| {
             let a_priority = self.priority_secondary_map.get(*a).unwrap();
             let b_priority = self.priority_secondary_map.get(*b).unwrap();
-            a_priority.cmp(b_priority)
+            a_priority.cmp(b_priority).then_with(|| a.cmp(b))
         });
         key
     }
